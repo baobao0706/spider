@@ -1,0 +1,181 @@
+# -*- coding: utf-8 -*-
+# @Time    : 2020/5/16 20:33
+# @Author  : ZHALONG
+# @FileName: 北京链家网.py
+# @Software: PyCharm
+
+import random
+import requests
+import pymysql
+from fake_useragent import UserAgent
+from parsel import Selector
+from queue import Queue
+from concurrent.futures import ThreadPoolExecutor
+
+class BjLianJia(object):
+    def __init__(self, url, esf_queue, zf_queue):
+        self.url = url
+        self.esf_queue = esf_queue
+        self.zf_queue = zf_queue
+        self._headers = ""
+        self._esf_url = ""
+        self._zf_url = ""
+        self._cj_url = ""
+
+    # 随机请求头
+    def random_ua(self):
+        user_agent = []
+        for i in range(10):
+            user_agent.append(UserAgent().random)
+        headers = {
+            "user-agent": random.choice(user_agent)
+        }
+        self._headers = headers
+
+    # 下载页面
+    def get_response(self, url):
+        try:
+            response = requests.get(url, headers=self._headers)
+            response.encoding = "utf-8"
+            response.raise_for_status()
+            return response
+        except Exception as e:
+            print(e.args)
+
+    # 解析主页面
+    def parse_url(self, response):
+        '''获取二手房、租房、商业办公的链接'''
+        selector = Selector(response.text)
+        esf_href = selector.xpath("//div[@class='nav typeUserInfo']//ul/li[1]/a/@href").get()  # 二手房链接
+        zf_href = selector.xpath("//div[@class='nav typeUserInfo']//ul/li[3]/a/@href").get() # 租房链接
+        self._esf_url = esf_href
+        self._zf_url =  zf_href
+
+    # 获取二手房链接
+    def parse_esf_house_url(self):
+        response = self.get_response(url=self._esf_url)
+        selector = Selector(response.text)
+        a_list = selector.xpath("//div[@data-role='ershoufang']/div/a")
+        for a in a_list:
+            area_href = a.xpath("./@href").get()
+            area_url = self._esf_url + "/" + area_href.split('/')[2]
+            esf_response = self.get_response(url=area_url)
+            html = Selector(esf_response.text)
+            count = html.xpath("//h2[@class='total fl']/span/text()").get()
+            page = int(count) // 30
+            if page > 100 :
+                for i in range(1, 101):
+                    url = area_url + f"/pg{i}"
+                    self.esf_queue.put(url)
+            else:
+                for i in range(1, page + 1):
+                    url = area_url + f"/pg{i}"
+                    self.esf_queue.put(url)
+
+    # 获取租房链接
+    def parse_zf_house_url(self):
+        response = self.get_response(url=self._zf_url)
+        selector = Selector(response.text)
+        li_list = selector.xpath("//div[@class='filter__wrapper w1150']/ul[2]/li")
+        for li in li_list:
+            area_href = li.xpath("./a/@href").get()
+            if area_href == "/zufang/":
+                continue
+            area_url = self._zf_url + area_href.split('/')[2]
+            zf_response = self.get_response(url=area_url)
+            html = Selector(zf_response.text)
+            count = html.xpath("//span[@class='content__title--hl']/text()").get()
+            page = int(count) // 30
+            if page > 100 :
+                for i in range(1, 101):
+                    url = area_url + f"/pg{i}"
+                    self.zf_queue.put(url)
+            else:
+                for i in range(1, page + 1):
+                    url = area_url + f"/pg{i}"
+                    self.zf_queue.put(url)
+
+    # 获取二手房信息
+    def parse_esf_info(self, url):
+        print("开始下载url：%s" % url)
+        response = self.get_response(url)
+        selector = Selector(response.text)
+        li_list = selector.xpath("//ul[@class='sellListContent']/li")
+        for li in li_list:
+            item = {}
+            item['house_estate'] = li.xpath(".//div[@class='flood']/div/a[1]/text()").get()  # 小区名
+            house_info = li.xpath(".//div[@class='address']/div/text()").get()
+            try:
+                info = house_info.split("|")
+                item['house_type'] = info[0].strip()   # 户型
+                item['house_square'] = info[1].strip()  # 面积
+                item['cx'] = info[2].strip()    # 朝向
+                item['house_floor'] = info[4].strip()   # 楼层
+                item['house_time'] = info[5].strip()    # 建筑时间
+            except Exception:
+                continue
+            item['total_price'] = li.xpath(".//div[@class='priceInfo']/div[1]/span/text()").get()  # 总价格
+            item['unit_price'] = li.xpath(".//div[@class='priceInfo']/div[2]/span/text()").get()  # 单价
+            self.save_mysql("beijingesf", item)
+
+    # 保存租房信息
+    def parse_zf_info(self, url):
+        print("开始下载url：%s" % url)
+        response = self.get_response(url)
+        selector = Selector(response.text)
+        div_list = selector.xpath("//div[@class='content__list']/div")
+        for div in div_list:
+            item = {}
+            try:
+                item['house_estate'] = div.xpath("./div/p[2]/a[3]/@title").get()
+                house_info = div.xpath("./div/p[2]/text()").getall()
+                if len(house_info) > 0:
+                    item['house_square'] = house_info[4].strip()
+                    item['cx'] = house_info[5].strip()
+                    item['house_type'] = house_info[6].strip()
+                item['house_floor'] = div.xpath("./div/p[2]/span/text()[2]").get().strip()
+                item['house_price'] = div.xpath("./div/span/em/text()").get()
+            except Exception:
+                continue
+            self.save_mysql("beijingzf", item)
+
+    # 保存到Mysql中
+    def save_mysql(self, table, item):
+        connect = pymysql.connect(
+            host="localhost",
+            port=3306,
+            user="root",
+            password="root",
+            db="lianjia",
+            charset="utf8"
+        )
+        cursor = connect.cursor()
+        if table == "beijingesf":
+            esf_sql = f"insert into {table}(xq,type,square,cx,floor,time,totalprice,unitprice) values ('%s','%s','%s','%s','%s','%s','%s','%s')" % (
+            item['house_estate'], item['house_type'], item['house_square'], item['cx'], item['house_floor'],
+            item['house_time'], item['total_price'], item['unit_price'])
+            cursor.execute(esf_sql)
+            connect.commit()
+        elif table == "beijingzf":
+            zf_sql = f"insert into {table}(xq,type,square,cx,floor,price) values ('%s','%s','%s','%s','%s','%s')" % (
+            item['house_estate'], item['house_type'], item['house_square'], item['cx'], item['house_floor'],
+            item['house_price'])
+            cursor.execute(zf_sql)
+            connect.commit()
+
+
+if __name__ == '__main__':
+    url = "https://bj.lianjia.com/"
+    esf_queue = Queue()
+    zf_queue = Queue()
+    pool = ThreadPoolExecutor()
+
+    spider = BjLianJia(url, esf_queue, zf_queue)
+    response = spider.get_response(url)
+    spider.parse_url(response)
+    spider.parse_esf_house_url()
+    # spider.parse_esf_info(url=esf_queue.get())
+    [pool.submit(spider.parse_esf_info, esf_queue.get()) for i in range(esf_queue.qsize())]
+    spider.parse_zf_house_url()
+    # spider.parse_zf_info(zf_queue.get())
+    [pool.submit(spider.parse_zf_info, zf_queue.get()) for i in range(zf_queue.qsize())]
