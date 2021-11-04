@@ -1,0 +1,90 @@
+# -*- coding: utf-8 -*-
+# @Time    : 2021/10/23 16:39
+# @Author  : ZHALONG
+# @FileName: bqg.py
+# @Software: PyCharm
+
+import requests
+import random
+from lxml import etree
+import time, datetime
+import os
+
+HEADERS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/70.0.3538.77 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_10_1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/41.0.2227.1 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/41.0.2227.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 5.1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/41.0.2224.3 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/40.0.2214.93 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 4.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/37.0.2049.0 Safari/537.36",
+    "Mozilla/5.0 (X11; OpenBSD i386) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/36.0.1985.125 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_9_2) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/36.0.1944.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 5.1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/35.0.2117.157 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 5.1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/34.0.1866.237 Safari/537.36",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/33.0.1750.517 Safari/537.36"
+]
+
+class BqgSearch:
+    def __init__(self):
+        self.url = "https://www.biqooge.com/modules/article/search.php"
+        self._headers = {"user-agent": random.choice(HEADERS)}
+
+    def parseInfo(self):
+        book_name = self.book_name
+        data = {
+            "searchtype": "articlename",
+            "searchkey": book_name.encode("gbk"),
+        }
+        try:
+            response = requests.post(self.url, headers=self._headers, data=data)
+            response.encoding = response.apparent_encoding
+            response.raise_for_status()
+            html = etree.HTML(response.text)
+            book_url = html.xpath("//tr[@id='nr']/td[1]/a/@href")
+            book_id = [id.split("/")[-2] for id in book_url]
+            author = html.xpath("//tr[@id='nr']/td[3]/text()")
+            name = html.xpath("//tr[@id='nr']/td[1]/a/text()")
+            for i in range(len(book_id)):
+                print("书名:{}\t编号:{}\t作者:{}".format(name[i], book_id[i], author[i]))
+            if "search" in response.url:
+                id = input("请输入要下载的图书编号:")
+                self.download("https://www.biqooge.com/" + id + "/")
+            else:
+                print("开始下载：{}".format(self.book_name))
+                self.download(response.url)
+        except Exception:
+             raise Exception("出现错误。。")
+
+    def download(self, book_url):
+        try:
+            book_response = requests.get(book_url, headers=self._headers)
+            book_response.encoding = book_response.apparent_encoding
+            book_html = etree.HTML(book_response.text)
+            book_name = book_html.xpath("//h1/text()")[0]
+            text_info = book_html.xpath("//div[@id='list']/dl/dt[contains(text(), '章节目录')]/following-sibling::dd")
+            for i in range(len(text_info)):
+                info = text_info[i]
+                zj_name = info.xpath("./a/text()")[0]
+                zj_url = "https://www.biqooge.com" + info.xpath("./a/@href")[0]
+                zj_response = requests.get(zj_url, headers=self._headers)
+                zj_response.encoding = zj_response.apparent_encoding
+                zj_html = etree.HTML(zj_response.text)
+                zj_text = zj_html.xpath("//div[@id='content']/text()")
+                zj_text = "".join(zj_text).replace("\n", "")
+                print(zj_url)
+                if not os.path.exists("D:\APython\笔趣阁\{}".format(book_name)):
+                    os.mkdir("D:\APython\笔趣阁\{}".format(book_name))
+                with open("D:\APython\笔趣阁\{}\{}.txt".format(book_name, zj_name), 'w', encoding="utf-8") as f:
+                    f.write(zj_text)
+                time.sleep(random.randint(0,1))
+        except Exception:
+            pass
+
+
+    def run(self):
+        self.book_name = "伏天氏"
+        self.parseInfo()
+
+
+if __name__ == '__main__':
+    BqgSearch().run()
