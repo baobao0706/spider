@@ -1,0 +1,98 @@
+# -*- coding: utf-8 -*-
+# @Time    : 2021/12/1 13:39
+# @Author  : ZHALONG
+# @FileName: lagou.py
+# @Software: PyCharm
+
+import requests
+import time
+import random
+import pymongo
+from parsel import Selector
+import re
+
+class LaGou:
+    __HEADERS = [
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/70.0.3538.77 Safari/537.36",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_10_1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/41.0.2227.1 Safari/537.36",
+        "Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/41.0.2227.0 Safari/537.36",
+        "Mozilla/5.0 (Windows NT 5.1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/41.0.2224.3 Safari/537.36",
+        "Mozilla/5.0 (Windows NT 10.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/40.0.2214.93 Safari/537.36",
+        "Mozilla/5.0 (Windows NT 4.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/37.0.2049.0 Safari/537.36",
+        "Mozilla/5.0 (X11; OpenBSD i386) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/36.0.1985.125 Safari/537.36",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_9_2) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/36.0.1944.0 Safari/537.36",
+        "Mozilla/5.0 (Windows NT 5.1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/35.0.2117.157 Safari/537.36",
+        "Mozilla/5.0 (Windows NT 5.1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/34.0.1866.237 Safari/537.36",
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/33.0.1750.517 Safari/537.36"
+    ]
+    __COOKIE = "ga=GA1.2.1986192151.1600140272; user_trace_token=20200915112433-13e608d9-9159-41fc-b902-3055963f0f4e; LGUID=20200915112433-f2d1d1c9-b4d0-4b79-8c1e-70d5f76b0929; RECOMMEND_TIP=true; privacyPolicyPopup=false; index_location_city=%E5%85%A8%E5%9B%BD; __lg_stoken__=6fbbf70b5b1f124da11120898fcfa3f9bbf73497e1e896fdb3822b8de6439e9796370a8eb749a1aa6a97f539aa6ba95cabbb1927f3ccf0d261580d4b598a536f88bebdce0f9e; JSESSIONID=ABAAABAABAGABFABA815568E83604316AE3C2E5F3B07278; WEBTJ-ID=20211201134329-17d7484f10abba-04dc97b3e446f-c343365-2073600-17d7484f10bd8a; PRE_UTM=; PRE_LAND=https%3A%2F%2Fwww.lagou.com%2F; LGSID=20211201134351-0c99c891-274a-4619-84f4-e58af3f39046; PRE_HOST=www.google.com.hk; PRE_SITE=https%3A%2F%2Fwww.google.com.hk%2F; sensorsdata2015session=%7B%7D; TG-TRACK-CODE=index_search; X_HTTP_TOKEN=31d2f4ee4d556f3b9948338361dd93dec900f82313; _gat=1; sensorsdata2015jssdkcross=%7B%22distinct_id%22%3A%221748fcb4a86975-000316ad149a39-333769-2073600-1748fcb4a878a0%22%2C%22%24device_id%22%3A%221748fcb4a86975-000316ad149a39-333769-2073600-1748fcb4a878a0%22%2C%22props%22%3A%7B%22%24latest_traffic_source_type%22%3A%22%E8%87%AA%E7%84%B6%E6%90%9C%E7%B4%A2%E6%B5%81%E9%87%8F%22%2C%22%24latest_referrer%22%3A%22https%3A%2F%2Fwww.google.com.hk%2F%22%2C%22%24latest_search_keyword%22%3A%22%E6%9C%AA%E5%8F%96%E5%88%B0%E5%80%BC%22%2C%22%24os%22%3A%22Windows%22%2C%22%24browser%22%3A%22Chrome%22%2C%22%24browser_version%22%3A%2292.0.4515.159%22%7D%7D; LGRID=20211201140140-0cb5d8c5-0d16-4619-8179-78a6267acb6d; SEARCH_ID=cac7445c5c774d86a5b452c7905b7fcf"
+    client = pymongo.MongoClient('localhost', 27017)
+    mydb = client['mydb']
+    db = mydb["lagou"]
+
+    def __init__(self, kd):
+        self.__headers = {
+            "user-agent": random.choice(self.__HEADERS),
+            "referer": "https://www.lagou.com/jobs/list_{}?labelWords=&fromSearch=true&suginput=".format(kd)
+        }
+        self.__cookie = {}
+        self.__url = "https://www.lagou.com/jobs/positionAjax.json?needAddtionalResult=false"
+        self.__data = {
+            "first": True,
+            "pn": 1,
+            "kd": kd
+        }
+
+    def get_cookie(self):
+        for result in self.__COOKIE.split(";"):
+            name, value = result.strip().split("=", 1)
+            self.__cookie[name] = value
+
+    def get_html(self, url):
+        try:
+            response = requests.post(url, headers=self.__headers, cookies=self.__cookie, data=self.__data)
+            response.encoding = response.apparent_encoding
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            print("错误")
+
+    def parse_result(self, result):
+        datas = result["content"]["positionResult"]["result"]
+        for data in datas:
+            context = {}
+            context["positionName"] = data["positionName"] # 岗位名称
+            context["positionId"] = data["positionId"] # 岗位ID
+            context["companyId"] = data["companyId"]   # 公司ID
+            context["companyFullName"] = data["companyFullName"]   # 公司全称
+            context["companyShortName"] = data["companyShortName"] # 公司简称
+            context["companySize"] = data["companySize"] # 公司规模
+            context["industryField"] = data["industryField"]   # 公司类型
+            context["financeStage"] = data["financeStage"] # 是否上市
+            context["firstType"] = data["firstType"] #
+            context["secondType"] = data["secondType"]
+            context["thirdType"] = data["thirdType"]
+            context["positionLables"] = data["positionLables"] # 标签
+            context["createTime"] = data["createTime"] # 发布时间
+            context["city"] = data["city"] # 地点
+            context["salary"] = data["salary"] # 工资
+            context["workYear"] = data["workYear"] # 工作经验
+            context["jobNature"] = data["jobNature"] # 工作性质
+            context["education"] = data["education"] # 学历
+            context["positionAdvantage"] = data["positionAdvantage"] # 简介
+            context["score"] = data["score"] # 分数
+            context["positionDetail"] = data["positionDetail"] # 职位描述
+            context["positionAddress"] = data["positionAddress"] # 地址
+            self.db.insert_one(context)
+            if self.__data["pn"] <= 30:
+                self.__data["pn"] += 1
+                self.parse_result(result)
+
+    def run(self):
+        self.get_cookie()
+        result = self.get_html(url=self.__url)
+        self.parse_result(result)
+
+if __name__ == '__main__':
+    spider = LaGou("Python")
+    spider.run()
